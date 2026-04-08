@@ -1,14 +1,7 @@
 -- weapon_equip_core.lua — Ядро: читает текущее оружие и патроны из RE2 Engine
--- Аналог RE4-версии, но вместо chainsaw.* используем app.ropeway.*
 --
--- Цепочка доступа:
---   EquipmentManager (singleton) → getPlayerEquipment() → Equipment
---   Equipment.EquipWeapon → Arm/Gun → WeaponType, WpBulletCounter
---
--- Для Python-разработчика:
---   sdk.get_managed_singleton("Class") = аналог Class.get_instance() — получаем глобальный объект
---   obj:call("method") = аналог obj.method() — вызываем метод
---   obj:get_field("field") = аналог obj.field — читаем поле
+-- Все настройки (оружия, профили, дедзоны) загружаются из re2_config.lua
+-- Этот файл НЕ нужно редактировать для добавления оружия.
 
 local sdk = sdk
 local re = re
@@ -16,17 +9,36 @@ local pcall = pcall
 local tostring = tostring
 local type = type
 
--- Как часто опрашиваем движок (каждые N тиков).
--- RE2 бежит на 60fps → ~10 опросов в секунду при POLL_INTERVAL=6
-local POLL_INTERVAL = 6
+-----------------------------------------------------------------------
+-- Загрузка конфига
+-----------------------------------------------------------------------
+local CONFIG_PATH = "reframework/data/DualSenseX/re2_config.lua"
 
--- Глобальный объект ядра — доступен другим модулям через _G.WeaponEquipCore
+local function load_config()
+    local f, err = loadfile(CONFIG_PATH)
+    if not f then
+        print("[DualsenseX] CONFIG ERROR: " .. tostring(err))
+        return nil
+    end
+    local ok, cfg = pcall(f)
+    if not ok or type(cfg) ~= "table" then
+        print("[DualsenseX] CONFIG ERROR: invalid format")
+        return nil
+    end
+    return cfg
+end
+
+local CFG = load_config() or { settings = {}, profiles = {}, weapons = {} }
+
+local POLL_INTERVAL = (CFG.settings and CFG.settings.poll_interval) or 6
+
+-- Глобальный объект ядра
 _G.WeaponEquipCore = _G.WeaponEquipCore or {}
 local CORE = _G.WeaponEquipCore
 
 CORE.config    = CORE.config or { enabled = true }
-CORE.callbacks = CORE.callbacks or {}   -- список функций, вызываемых при смене оружия
-CORE.last_info = CORE.last_info or nil  -- последнее состояние оружия
+CORE.callbacks = CORE.callbacks or {}
+CORE.last_info = CORE.last_info or nil
 CORE.status    = CORE.status or {
     ready            = false,
     controller_found = false,
@@ -36,7 +48,23 @@ CORE.status    = CORE.status or {
     ammoMax          = 0,
 }
 
--- Безопасный вызов: если метод упадёт, вернёт nil вместо краша всего мода
+-- Перезагрузка конфига (вызывается из UI кнопкой)
+function CORE.reload_config()
+    local new_cfg = load_config()
+    if new_cfg then
+        CFG = new_cfg
+        POLL_INTERVAL = (CFG.settings and CFG.settings.poll_interval) or 6
+        print("[DualsenseX] Config reloaded")
+    end
+    return CFG
+end
+
+-- Доступ к конфигу для других модулей
+function CORE.get_config() return CFG end
+
+-----------------------------------------------------------------------
+-- Безопасные вызовы RE Engine
+-----------------------------------------------------------------------
 local function safe_call(obj, method, ...)
     if not obj then return nil end
     local ok, result = pcall(obj.call, obj, method, ...)
@@ -44,7 +72,6 @@ local function safe_call(obj, method, ...)
     return nil
 end
 
--- Безопасное чтение поля объекта
 local function safe_field(obj, field_name)
     if not obj then return nil end
     local ok, result = pcall(obj.get_field, obj, field_name)
@@ -53,71 +80,7 @@ local function safe_field(obj, field_name)
 end
 
 -----------------------------------------------------------------------
--- Таблица: WeaponType enum → категория оружия (для маппинга на профили DSX)
--- WPxxxx коды → человеческое имя и тип.
--- ВНИМАНИЕ: эту таблицу нужно будет заполнить/уточнить опытным путём!
--- Пока заполняем известные оружия RE2 по косвенным данным.
------------------------------------------------------------------------
-local WEAPON_INFO = {
-    -- Hex Item ID → Decimal = наш WeaponType enum
-    -- Подтверждено: MQ 11 = 0x15 = 21 ✓
-
-    -- Пистолеты (Леон)
-    [1]   = { name = "Matilda",                type = "hg" },       -- 0x01
-    -- Пистолеты (Клэр)
-    [2]   = { name = "M19",                    type = "hg" },       -- 0x02
-    [3]   = { name = "JMB Hp3",                type = "hg" },       -- 0x03
-    [4]   = { name = "Quickdraw Army",         type = "hg" },       -- 0x04
-    -- Другие пистолеты
-    [7]   = { name = "MUP",                    type = "hg" },       -- 0x07
-    [8]   = { name = "Broom Hc",               type = "hg" },       -- 0x08
-    [9]   = { name = "SLS 60",                 type = "hg" },       -- 0x09
-
-    -- Дробовик
-    [11]  = { name = "W-870",                  type = "sg" },       -- 0x0B
-
-    -- SMG
-    [21]  = { name = "MQ 11",                  type = "smg" },      -- 0x15
-    [23]  = { name = "LE 5",                   type = "smg" },      -- 0x17
-
-    -- Магнум
-    [31]  = { name = "Lightning Hawk",         type = "mag" },      -- 0x1F
-
-    -- Гранатомёт
-    [42]  = { name = "GM 79",                  type = "gl" },       -- 0x2A
-
-    -- Спецоружие
-    [41]  = { name = "EMF Visualizer",         type = "none" },     -- 0x29
-    [43]  = { name = "Chemical Flamethrower",  type = "special" },  -- 0x2B
-    [44]  = { name = "Spark Shot",             type = "special" },  -- 0x2C
-
-    -- Тяжёлое оружие
-    [45]  = { name = "ATM-4",                  type = "gl" },       -- 0x2D
-    [49]  = { name = "Anti-Tank Rocket",       type = "gl" },       -- 0x31
-    [50]  = { name = "Minigun",                type = "smg" },      -- 0x32
-
-    -- Нож
-    [46]  = { name = "Combat Knife",           type = "knife" },    -- 0x2E
-    [47]  = { name = "Combat Knife (Infinite)", type = "knife" },   -- 0x2F
-
-    -- Гранаты (суб-оружие)
-    [65]  = { name = "Hand Grenade",           type = "grenade" },  -- 0x41
-    [66]  = { name = "Flash Grenade",          type = "grenade" },  -- 0x42
-
-    -- Бонусное оружие (Samurai Edge)
-    [82]  = { name = "Samurai Edge (Infinite)", type = "hg" },     -- 0x52
-    [83]  = { name = "Samurai Edge (Chris)",   type = "hg" },       -- 0x53
-    [84]  = { name = "Samurai Edge (Jill)",    type = "hg" },       -- 0x54
-    [85]  = { name = "Samurai Edge (Albert)",  type = "hg" },       -- 0x55
-
-    -- Infinite варианты
-    [222] = { name = "ATM-4 (Infinite)",       type = "gl" },       -- 0xDE
-    [242] = { name = "Anti-Tank Rocket (Inf)", type = "gl" },       -- 0xF2
-    [252] = { name = "Minigun (Infinite)",     type = "smg" },      -- 0xFC
-}
-
------------------------------------------------------------------------
--- Получить Equipment игрока через EquipmentManager (singleton)
+-- Чтение состояния из RE2 Engine
 -----------------------------------------------------------------------
 local function get_player_equipment()
     local em = sdk.get_managed_singleton("app.ropeway.EquipmentManager")
@@ -125,97 +88,133 @@ local function get_player_equipment()
     return safe_call(em, "getPlayerEquipment")
 end
 
------------------------------------------------------------------------
--- Получить текущий WeaponType enum через EquipmentManager
------------------------------------------------------------------------
 local function get_current_weapon_type_enum()
     local em = sdk.get_managed_singleton("app.ropeway.EquipmentManager")
     if not em then return nil end
     return safe_call(em, "get_CurrentWeaponType")
 end
 
------------------------------------------------------------------------
--- Получить текущее оружие (Arm/Gun объект) из Equipment
------------------------------------------------------------------------
 local function get_equip_weapon(equipment)
     if not equipment then return nil end
-    -- EquipWeapon — это текущее активное оружие (тип Arm или Gun)
     return safe_field(equipment, "<EquipWeapon>k__BackingField")
 end
 
------------------------------------------------------------------------
--- Прочитать патроны из объекта Gun
--- Gun наследует Arm и имеет get_WpBulletCounter() → float
------------------------------------------------------------------------
-local function get_ammo_from_gun(weapon)
-    if not weapon then return 0, 0 end
+local function get_ammo_info()
+    local im = sdk.get_managed_singleton("app.ropeway.gamemastering.InventoryManager")
+    if not im then return 0, 0 end
 
-    -- Способ 1: getBulletNumber() → int (текущие патроны в магазине)
-    local current = safe_call(weapon, "getBulletNumber") or 0
+    local current = safe_call(im, "getMainWeaponRemainingBullet") or 0
+    local reserve = safe_call(im, "getMainWeaponReloadableBullet") or 0
 
-    -- Способ 2: fallback на WpBulletCounter (float)
-    if current == 0 then
-        local bullet_counter = safe_call(weapon, "get_WpBulletCounter")
-        if bullet_counter then
-            current = math.floor(bullet_counter + 0.5)
-        end
-    end
-
-    -- Макс патронов: getReloadableBulletNumber = сколько можно дозарядить
-    -- Если можно дозарядить > 0, значит магазин не бесконечный
-    local reloadable = safe_call(weapon, "getReloadableBulletNumber") or 0
-    local max_ammo = current + reloadable
-
-    return current, max_ammo
+    return current, reserve
 end
 
 -----------------------------------------------------------------------
--- Собрать полную информацию о текущем оружии
+-- Собрать информацию о текущем оружии (используя конфиг)
 -----------------------------------------------------------------------
 local function get_weapon_info()
     local equipment = get_player_equipment()
     if not equipment then
-        return { id = "none", name = "No Equipment", type = "none", ammo = 0, ammoMax = 0 }
+        return { id = "none", name = "No Equipment", type = "none", ammo = 0, reserve = 0 }
     end
 
-    -- WeaponType enum (число)
     local wt_enum = get_current_weapon_type_enum()
     local wt_val = wt_enum and tonumber(wt_enum) or 0
 
-    -- Имя и тип из нашей таблицы
-    local info_entry = WEAPON_INFO[wt_val]
+    if wt_val == 0 then
+        return { id = 0, name = "Bare Hand", type = "none", ammo = 0, reserve = 0 }
+    end
+    if wt_val < 0 or wt_val == 4294967295 then
+        return { id = "invalid", name = "None", type = "none", ammo = 0, reserve = 0 }
+    end
+
+    -- Ищем в конфиге
+    local weapons = CFG.weapons or {}
+    local info_entry = weapons[wt_val]
     local weapon_name = info_entry and info_entry.name or ("WP[" .. tostring(wt_val) .. "]")
     local weapon_type = info_entry and info_entry.type or "unknown"
 
-    -- BareHand (0) или Invalid (-1)
-    if wt_val == 0 then
-        return { id = 0, name = "Bare Hand", type = "none", ammo = 0, ammoMax = 0 }
-    end
-    if wt_val < 0 or wt_val == 4294967295 then
-        return { id = "invalid", name = "None", type = "none", ammo = 0, ammoMax = 0 }
-    end
-
-    -- Читаем патроны из активного оружия
-    local weapon_obj = get_equip_weapon(equipment)
-    local ammo, ammo_max = get_ammo_from_gun(weapon_obj)
+    local ammo, reserve = get_ammo_info()
 
     return {
         id      = wt_val,
         name    = weapon_name,
         type    = weapon_type,
-        ammo    = ammo,
-        ammoMax = ammo_max,
+        ammo    = ammo,       -- патроны в магазине
+        reserve = reserve,    -- запас патронов
     }
 end
 
 -----------------------------------------------------------------------
--- Главный цикл опроса
+-- Rapid Fire: ограничение выстрелов за нажатие R2
+-- Устанавливает EnableRapidFireNumber на объекте Gun
+-----------------------------------------------------------------------
+-----------------------------------------------------------------------
+-- Rapid Fire: ограничение выстрелов за нажатие R2
+-- Перехватываем executeFire через sdk.hook.
+-- Логика: считаем выстрелы. Если лимит достигнут — блокируем.
+-- Сброс через таймер: если executeFire не вызывался 10+ тиков — R2 отпущен.
+-----------------------------------------------------------------------
+_G._rf_count = 0
+_G._rf_limit = nil
+_G._rf_blocked = false
+_G._rf_last_fire = 0
+_G._rf_tick = 0
+_G._rf_cooldown = 60  -- ~600мс при 100 тиков/сек
+
+local function update_rapid_fire_limit(weapon_type)
+    local profiles = CFG.profiles or {}
+    local profile = profiles[weapon_type]
+    if profile and profile.rapid_fire and profile.rapid_fire > 0 then
+        _G._rf_limit = profile.rapid_fire
+    else
+        _G._rf_limit = nil
+    end
+    _G._rf_count = 0
+    _G._rf_blocked = false
+end
+
+local function rapid_fire_tick()
+    _G._rf_tick = _G._rf_tick + 1
+    if _G._rf_blocked and (_G._rf_tick - _G._rf_last_fire) > _G._rf_cooldown then
+        _G._rf_count = 0
+        _G._rf_blocked = false
+    end
+end
+
+local gun_type = sdk.find_type_definition("app.ropeway.implement.Gun")
+if gun_type then
+    local execute_fire = gun_type:get_method("executeFire")
+    if execute_fire then
+        sdk.hook(
+            execute_fire,
+            function(args)
+                if not _G._rf_limit then return end
+                if not CORE.config.enabled then return end
+
+                if _G._rf_blocked then
+                    _G._rf_last_fire = _G._rf_tick  -- продлеваем пока жмут
+                    return sdk.PreHookResult.SKIP_ORIGINAL
+                end
+
+                _G._rf_count = _G._rf_count + 1
+                _G._rf_last_fire = _G._rf_tick
+                if _G._rf_count >= _G._rf_limit then
+                    _G._rf_blocked = true
+                end
+            end,
+            function(retval) return retval end
+        )
+    end
+end
+
+-----------------------------------------------------------------------
+-- Главный цикл
 -----------------------------------------------------------------------
 local tick = 0
 local last_id = nil
 local heartbeat = 0
 
--- Регистрация колбэка при смене оружия (используется dsx_writer)
 function CORE.on_weapon_change(fn)
     if type(fn) == "function" then
         CORE.callbacks[#CORE.callbacks + 1] = fn
@@ -229,26 +228,28 @@ local function notify_all(info)
 end
 
 local function on_update()
+    rapid_fire_tick()  -- обновляем таймер сброса каждый тик
+
     tick = tick + 1
     if tick % POLL_INTERVAL ~= 0 then return end
     if not CORE.config.enabled then return end
 
     local info = get_weapon_info()
 
-    -- Обновляем статус для UI
-    CORE.status.weapon_name    = info.name
+    CORE.status.weapon_name     = info.name
     CORE.status.weapon_type_raw = info.id
-    CORE.status.ammo           = info.ammo
-    CORE.status.ammoMax        = info.ammoMax
+    CORE.status.ammo            = info.ammo
+    CORE.status.ammoMax         = info.reserve
     CORE.status.controller_found = (info.id ~= "none" and info.id ~= "invalid")
     CORE.last_info = info
 
-    -- Пульс: даже без смены оружия, раз в ~60 тиков обновляем DSX
-    -- (на случай изменения патронов — dry fire эффект)
     heartbeat = heartbeat + 1
     local force_pulse = (heartbeat > 10)
 
     if (info.id ~= last_id) or force_pulse then
+        if info.id ~= last_id then
+            pcall(update_rapid_fire_limit, info.type)
+        end
         last_id = info.id
         CORE.status.ready = true
         notify_all(info)
@@ -256,9 +257,8 @@ local function on_update()
     end
 end
 
--- Хук в главный цикл движка
 pcall(function()
     re.on_application_entry("UpdateBehavior", on_update)
 end)
 
-CORE._internal = { poll = POLL_INTERVAL, weapon_info_table = WEAPON_INFO }
+CORE._internal = { poll = POLL_INTERVAL }

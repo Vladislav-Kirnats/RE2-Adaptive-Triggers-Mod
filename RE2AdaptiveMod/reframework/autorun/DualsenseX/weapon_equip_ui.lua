@@ -31,13 +31,10 @@ re.on_draw_ui(function()
 
         imgui.separator()
 
-        -- Кнопка перезагрузки профилей (без перезапуска игры)
-        if imgui.button("Reload Trigger Configs") then
-            if DSX.reload_mapping then
-                DSX.reload_mapping()
-                if CORE.last_info and DSX.apply_for_weapon then
-                    DSX.apply_for_weapon(CORE.last_info)
-                end
+        -- Кнопка перезагрузки конфига (без перезапуска игры)
+        if imgui.button("Reload Config (re2_config.lua)") then
+            if DSX.reload_config then
+                DSX.reload_config()
             end
         end
 
@@ -65,7 +62,9 @@ re.on_draw_ui(function()
             imgui.text("Weapon: " .. tostring(info.name))
             imgui.text("Type:   " .. tostring(info.type))
             imgui.text("ID:     " .. tostring(info.id))
-            imgui.text("Ammo:   " .. tostring(info.ammo) .. " / " .. tostring(info.ammoMax))
+            imgui.text("Ammo:   " .. tostring(info.ammo) .. " | " .. tostring(info.reserve))
+            imgui.text("RF: limit=" .. tostring(_G._rf_limit) .. " count=" .. tostring(_G._rf_count) .. " blocked=" .. tostring(_G._rf_blocked) .. " gap=" .. tostring((_G._rf_global_tick or 0) - (_G._rf_last_fire_tick or 0)))
+
         else
             imgui.text("Waiting for game...")
         end
