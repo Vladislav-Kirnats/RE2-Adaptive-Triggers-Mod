@@ -29,14 +29,17 @@
 --
 -- LED: {R, G, B} — цвет подсветки контроллера (0-255)
 --
--- r2_threshold (0-255) — порог: игра получит нажатие R2 только
---   когда триггер продавлен на эту долю. 0 = сразу, 180 = ~70% хода
+-- r2_threshold (0-255) — порог нажатия R2. 0 = сразу, 180 = ~70% хода
 --
--- rapid_fire (число) — сколько выстрелов за одно зажатие R2:
---   nil / не указано = поведение игры по умолчанию (не менять)
---   1 = строго один выстрел за нажатие (полуавтомат)
---   3 = очередь по 3 патрона
---   0 = без ограничений (полный автомат)
+-- kick (таблица) — эффект отдачи при выстреле (опционально)
+--   Такой же формат как основной профиль (r2, led, и т.д.)
+--   duration — кадров без выстрела до восстановления основного профиля
+--   Если kick не указан — выстрел без отдачи
+--
+-- empty (таблица) — профиль для пустого магазина (опционально)
+--   Переопределяет поля основного профиля когда ammo == 0
+--
+-- rapid_fire — 1 = один выстрел за нажатие, 0/nil = без ограничений
 -----------------------------------------------------------------------
 
 return {
@@ -45,9 +48,9 @@ return {
     -- ГЛОБАЛЬНЫЕ НАСТРОЙКИ
     ---------------------------------------------------------------
     settings = {
-        default_r2_threshold = 180,    -- порог R2 по умолчанию
-        default_l2_threshold = 0,      -- порог L2 (прицел, обычно 0)
-        poll_interval = 6,             -- частота опроса (6 ≈ 10 раз/сек)
+        default_r2_threshold = 180,
+        default_l2_threshold = 0,
+        poll_interval = 6,
     },
 
     ---------------------------------------------------------------
@@ -56,78 +59,194 @@ return {
     profiles = {
 
         default = {
-            l2 = { mode = "resistance", start = 0, force = 3 },
+            l2 = { mode = "off" },
             r2 = { mode = "off" },
             led = { 0, 0, 0 },
             r2_threshold = 0,
         },
 
-        -- ПИСТОЛЕТЫ: тугой спуск, один выстрел за нажатие
+        -- ПИСТОЛЕТЫ (Matilda, M19, JMB, SLS, Samurai Edge)
+        -- Классический спуск с упором, лёгкая отдача
         hg = {
-            l2 = { mode = "off"},
-            r2 = { mode = "weapon", start = 0, stop = 9, force = 8 },
+            l2 = { mode = "resistance", start = 0, force = 0 },
+            r2 = { mode = "weapon", start = 0, stop = 7, force = 6 },
             led = { 0, 120, 255 },          -- синий
-            r2_threshold = 223,
-            rapid_fire = 1,                 -- строго полуавтомат
+            r2_threshold = 200,
+            rapid_fire = 1,
+            kick = {
+                l2 = { mode = "vibration", intensity = 20 },
+                r2 = { mode = "vibration", intensity = 50 },
+                duration = 3,
+            },
+            empty = {
+                r2 = { mode = "click", start = 0, force = 4 },
+                led = { 100, 100, 100 },
+            },
         },
 
-        -- ДРОБОВИК: один выстрел за нажатие
+        -- ДРОБОВИК (W-870)
+        -- Тугая помпа, мощный щелчок, сильная отдача
         sg = {
-            l2 = { mode = "resistance", start = 0, force = 6 },
-            r2 = { mode = "bow", start = 0, stop = 6, force = 8, snap = 8 },
+            l2 = { mode = "resistance", start = 0, force = 1 },
+            r2 = { mode = "bow", start = 0, stop = 6, force = 6, snap = 5 },
             led = { 255, 40, 40 },          -- красный
-            r2_threshold = 200,
-            rapid_fire = 1,                 -- один выстрел
+            r2_threshold = 190,
+            rapid_fire = 1,
+            kick = {
+                l2 = { mode = "vibration", intensity = 50 },
+                r2 = { mode = "vibration", intensity = 100 },
+                duration = 5,
+            },
+            empty = {
+                r2 = { mode = "click", start = 0, force = 4 },
+                led = { 50, 0, 0 },
+            },
         },
 
-        -- МАГНУМ: один выстрел за нажатие
+        -- МАГНУМ (Lightning Hawk)
+        -- Тяжёлый взвод курка, мощная отдача
         mag = {
-            l2 = { mode = "resistance", start = 0, force = 6 },
-            r2 = { mode = "bow", start = 3, stop = 9, force = 8, snap = 8 },
+            l2 = { mode = "resistance", start = 0, force = 1 },
+            r2 = { mode = "bow", start = 2, stop = 7, force = 7, snap = 6 },
             led = { 180, 0, 255 },          -- фиолетовый
-            r2_threshold = 220,
-            rapid_fire = 1,                 -- один выстрел
-        },
-
-        -- SMG: зажал = стреляет очередью
-        smg = {
-            l2 = { mode = "off"},
-            r2 = { mode = "vibration", start = 6, stop = 9, intensity = 20 },
-            led = { 255, 140, 0 },          -- оранжевый
             r2_threshold = 200,
-            -- rapid_fire не указан = поведение по умолчанию (автомат)
+            rapid_fire = 1,
+            kick = {
+                l2 = { mode = "vibration", intensity = 50 },
+                r2 = { mode = "vibration", intensity = 100 },
+                duration = 4,
+            },
+            empty = {
+                r2 = { mode = "click", start = 0, force = 4 },
+                led = { 60, 0, 80 },
+            },
         },
 
-        -- ГРАНАТОМЁТ: тяжёлое оружие, плавный спуск
+        -- MQ 11 — помедленнее LE 5
+        mq11 = {
+            l2 = { mode = "resistance", start = 0, force = 1 },
+            r2 = { mode = "bow", start = 2, stop = 5, force = 4, snap = 6 },
+            led = { 255, 140, 0 },          -- оранжевый
+            r2_threshold = 170,
+            kick = {
+                l2 = { mode = "vibration", intensity = 6 },
+                r2 = { mode = "vibration", intensity = 15 },
+                duration = 6,
+            },
+            empty = {
+                r2 = { mode = "off" },
+                led = { 80, 50, 0 },
+            },
+        },
+
+        -- LE 5 — быстрее MQ 11
+        le5 = {
+            l2 = { mode = "resistance", start = 0, force = 1 },
+            r2 = { mode = "bow", start = 2, stop = 5, force = 4, snap = 6 },
+            led = { 200, 160, 0 },          -- тёмно-жёлтый
+            r2_threshold = 170,
+            kick = {
+                l2 = { mode = "vibration", intensity = 10 },
+                r2 = { mode = "vibration", intensity = 25 },
+                duration = 6,
+            },
+            empty = {
+                r2 = { mode = "off" },
+                led = { 80, 60, 0 },
+            },
+        },
+
+        -- MINIGUN
+        -- Лёгкий спуск (кнопка), постоянная средняя тряска
+        minigun = {
+            l2 = { mode = "resistance", start = 0, force = 1 },
+            r2 = { mode = "resistance", start = 0, force = 2 },
+            led = { 255, 200, 0 },          -- жёлтый
+            r2_threshold = 100,
+            kick = {
+                l2 = { mode = "vibration", intensity = 15 },
+                r2 = { mode = "vibration", intensity = 40 },
+                duration = 30,              -- мотор "дышит" каждые 30 кадров
+            },
+        },
+
+        -- ГРАНАТОМЁТ (GM 79)
+        -- Плавный тяжёлый спуск, сильная отдача
         gl = {
-            l2 = { mode = "resistance", start = 0, force = 8 },
-            r2 = { mode = "resistance", start = 0, force = 4 },
+            l2 = { mode = "resistance", start = 0, force = 6 },
+            r2 = { mode = "resistance", start = 0, force = 5 },
             led = { 0, 255, 0 },            -- зелёный
             r2_threshold = 180,
+            rapid_fire = 1,
+            kick = {
+                l2 = { mode = "vibration", intensity = 50 },
+                r2 = { mode = "vibration", intensity = 100 },
+                led = { 255, 255, 0 },      -- жёлтая вспышка
+                duration = 4,
+            },
         },
 
-        -- СПЕЦОРУЖИЕ (Sparkshot, Огнемёт)
-        special = {
-            l2 = { mode = "resistance", start = 0, force = 4 },
-            r2 = { mode = "weapon", start = 2, stop = 8, force = 5 },
-            led = { 0, 255, 255 },          -- голубой
-            r2_threshold = 150,
+        -- РАКЕТНИЦА (ATM-4, Anti-Tank Rocket)
+        -- Тяжёлое сопротивление, максимальная отдача
+        rocket = {
+            l2 = { mode = "resistance", start = 0, force = 6 },
+            r2 = { mode = "resistance", start = 0, force = 6 },
+            led = { 255, 60, 0 },           -- красно-оранжевый
+            r2_threshold = 200,
+            rapid_fire = 1,
+            kick = {
+                l2 = { mode = "vibration", intensity = 70 },
+                r2 = { mode = "vibration", intensity = 120 },
+                led = { 255, 0, 0 },        -- красная вспышка
+                duration = 5,
+            },
         },
 
-        -- НОЖ: минимальное сопротивление
-        knife = {
+        -- ОГНЕМЁТ (Chemical Flamethrower)
+        -- Плавный вентиль, постоянная лёгкая тряска пока льёт
+        flamethrower = {
+            l2 = { mode = "resistance", start = 0, force = 3 },
+            r2 = { mode = "resistance", start = 0, force = 3 },
+            led = { 255, 80, 0 },           -- оранжевый
+            r2_threshold = 120,
+        },
+
+        -- SPARK SHOT
+        -- Средний спуск, резкий разряд
+        sparkshot = {
             l2 = { mode = "resistance", start = 0, force = 1 },
+            r2 = { mode = "weapon", start = 2, stop = 7, force = 5 },
+            led = { 0, 200, 255 },          -- электро-голубой
+            r2_threshold = 160,
+            kick = {
+                l2 = { mode = "vibration", intensity = 30 },
+                r2 = { mode = "vibration", intensity = 50 },
+                duration = 4,
+            },
+        },
+
+        -- НОЖ (Combat Knife)
+        -- Свободный триггер, без kick
+        knife = {
+            l2 = { mode = "off" },
             r2 = { mode = "off" },
             led = { 255, 255, 255 },        -- белый
             r2_threshold = 0,
+            empty = {
+                r2 = { mode = "off" },
+            },
         },
 
-        -- ГРАНАТЫ: тяжёлый бросок
+        -- ГРАНАТЫ (Hand Grenade, Flash Grenade)
+        -- Сопротивление броска, без kick (бросок, не выстрел)
         grenade = {
-            l2 = { mode = "resistance", start = 0, force = 8 },
+            l2 = { mode = "off" },
             r2 = { mode = "resistance", start = 0, force = 4 },
             led = { 0, 255, 0 },            -- зелёный
             r2_threshold = 100,
+            empty = {
+                r2 = { mode = "resistance", start = 0, force = 4 },
+            },
         },
 
         -- НЕТ ОРУЖИЯ
@@ -141,9 +260,6 @@ return {
 
     ---------------------------------------------------------------
     -- ТАБЛИЦА ОРУЖИЯ RE2
-    -- [ID] = { name = "Название", type = "тип_из_profiles" }
-    --
-    -- Чтобы добавить: допиши строку, type = ключ из profiles
     ---------------------------------------------------------------
     weapons = {
         -- Пистолеты
@@ -163,8 +279,8 @@ return {
         [11]  = { name = "W-870",                   type = "sg" },
 
         -- SMG
-        [21]  = { name = "MQ 11",                   type = "smg" },
-        [23]  = { name = "LE 5",                    type = "smg" },
+        [21]  = { name = "MQ 11",                   type = "mq11" },
+        [23]  = { name = "LE 5",                    type = "le5" },
 
         -- Магнум
         [31]  = { name = "Lightning Hawk",          type = "mag" },
@@ -172,15 +288,17 @@ return {
         -- Гранатомёт
         [42]  = { name = "GM 79",                   type = "gl" },
 
-        -- Спецоружие
+        -- Спецоружие (отдельные профили)
         [41]  = { name = "EMF Visualizer",          type = "none" },
-        [43]  = { name = "Chemical Flamethrower",   type = "special" },
-        [44]  = { name = "Spark Shot",              type = "special" },
+        [43]  = { name = "Chemical Flamethrower",   type = "flamethrower" },
+        [44]  = { name = "Spark Shot",              type = "sparkshot" },
 
-        -- Тяжёлое оружие
-        [45]  = { name = "ATM-4",                   type = "gl" },
-        [49]  = { name = "Anti-Tank Rocket",        type = "gl" },
-        [50]  = { name = "Minigun",                 type = "smg" },
+        -- Ракетницы
+        [45]  = { name = "ATM-4",                   type = "rocket" },
+        [49]  = { name = "Anti-Tank Rocket",        type = "rocket" },
+
+        -- Minigun
+        [50]  = { name = "Minigun",                 type = "minigun" },
 
         -- Нож
         [46]  = { name = "Combat Knife",            type = "knife" },
@@ -191,8 +309,8 @@ return {
         [66]  = { name = "Flash Grenade",           type = "grenade" },
 
         -- Infinite варианты
-        [222] = { name = "ATM-4 (Infinite)",        type = "gl" },
-        [242] = { name = "Anti-Tank Rocket (Inf)",  type = "gl" },
-        [252] = { name = "Minigun (Infinite)",      type = "smg" },
+        [222] = { name = "ATM-4 (Infinite)",        type = "rocket" },
+        [242] = { name = "Anti-Tank Rocket (Inf)",  type = "rocket" },
+        [252] = { name = "Minigun (Infinite)",      type = "minigun" },
     },
 }

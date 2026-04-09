@@ -1,72 +1,106 @@
 -- weapon_equip_ui.lua — UI панель в меню REFramework (Insert)
--- Показывает: текущее оружие, патроны, статус DSX, кнопки управления
+-- Статус, Force Sync, Reload Profiles, Enable/Disable
 
 local imgui = imgui
 local os = os
 
-local CORE = _G.WeaponEquipCore or {}
-local DSX  = _G.DSXWriter or {}
-
--- Проверка: DSX недавно получал данные?
-local function dsx_ok()
-    if not DSX or not DSX.last_applied then return false end
-    return (os.time() - DSX.last_applied) < 3
-end
-
 re.on_draw_ui(function()
-    if imgui.tree_node("DualSenseX RE2 Status") then
+    local CORE = _G.WeaponEquipCore
+    local DSX  = _G.DSXWriter
 
-        -- Вкл/Выкл
-        local enabled = CORE.config and CORE.config.enabled or false
-        local changed, new_val = imgui.checkbox("Enable Adaptive Triggers", enabled)
-        if changed then
-            if CORE.config then CORE.config.enabled = new_val end
-            -- При выключении — сбрасываем триггеры в Normal
-            if not new_val and DSX.payload_reset and DSX.out_path then
-                local p = DSX.payload_reset()
-                local f = io.open(DSX.out_path, "wb")
-                if f then f:write(p); f:close() end
+    if imgui.tree_node("DualSenseX RE2 Mod") then
+
+        -- Статус модуля
+        local core_ready = CORE and CORE.status and CORE.status.ready
+        imgui.text("Core:   " .. (core_ready and "READY" or "WAITING..."))
+        imgui.text("Writer: " .. (DSX and DSX.status or "NOT LOADED"))
+
+        -- Путь payload.json
+        if DSX and DSX.out_path then
+            imgui.text("File:   " .. DSX.out_path)
+        end
+
+        -- Последняя запись
+        if DSX and DSX.last_applied and DSX.last_applied > 0 then
+            local ago = os.time() - DSX.last_applied
+            imgui.text("Last write: " .. ago .. "s ago")
+        end
+
+        imgui.separator()
+
+        -- Информация об оружии
+        if CORE and CORE.last_info then
+            local info = CORE.last_info
+            imgui.text("Weapon:  " .. tostring(info.name))
+            imgui.text("Type:    " .. tostring(info.type))
+            imgui.text("Ammo:    " .. tostring(info.ammo) .. " / " .. tostring(info.reserve))
+
+            if info.ammo == 0 then
+                imgui.text("STATE: EMPTY (Dry Fire)")
+            else
+                imgui.text("STATE: ACTIVE")
+            end
+        else
+            imgui.text("Waiting for game data... (Equip a weapon)")
+        end
+
+        imgui.separator()
+
+        -- Кнопки управления
+        if imgui.button("Force Sync Triggers") then
+            if DSX and DSX.force_sync then
+                DSX.force_sync()
+                print("[DualSenseX] Force sync!")
+            else
+                print("[DualSenseX] Writer not ready")
             end
         end
 
-        imgui.separator()
-
-        -- Кнопка перезагрузки конфига (без перезапуска игры)
-        if imgui.button("Reload Config (re2_config.lua)") then
-            if DSX.reload_config then
-                DSX.reload_config()
+        if imgui.button("Reload Profiles (weapon_dsx.lua)") then
+            if DSX and DSX.reload_mapping then
+                DSX.reload_mapping()
+                print("[DualSenseX] Profiles reloaded!")
+                -- Сразу применяем к текущему оружию
+                if DSX.force_sync then DSX.force_sync() end
             end
         end
 
-        imgui.separator()
-
-        -- Статус подключения
-        if DSX.out_path then
-            imgui.text("Payload File: OK (" .. DSX.out_path .. ")")
-        else
-            imgui.text("Payload File: MISSING — check reframework/data/DualSenseX/payload.json")
+        if imgui.button("Reset Triggers (Off)") then
+            if DSX and DSX.payload_reset then
+                local io_mod = io
+                local reset = DSX.payload_reset()
+                if DSX.out_path then
+                    local f = io_mod.open(DSX.out_path, "wb")
+                    if f then
+                        f:write(reset)
+                        f:close()
+                        print("[DualSenseX] Triggers reset to OFF")
+                    end
+                end
+            end
         end
 
-        if dsx_ok() then
-            imgui.text("DSX Link: ACTIVE")
-        else
-            imgui.text("DSX Link: WAITING...")
+        -- Debug: rapid fire + kick
+        imgui.separator()
+        if DSX then
+            imgui.text("Kick active: " .. tostring(DSX._kick_active or false))
+            imgui.text("Kick frames: " .. tostring(DSX._kick_frames_left or 0))
+            imgui.text("Rapid count: " .. tostring(DSX._rapid_fire_count or 0))
+            imgui.text("Rapid cooldown: " .. tostring(DSX._rapid_fire_cooldown or 0))
         end
 
+        -- Enable/Disable
         imgui.separator()
-
-        -- Информация о текущем оружии
-        imgui.text("---- Current Weapon ----")
-        local info = CORE.last_info
-        if info and info.name then
-            imgui.text("Weapon: " .. tostring(info.name))
-            imgui.text("Type:   " .. tostring(info.type))
-            imgui.text("ID:     " .. tostring(info.id))
-            imgui.text("Ammo:   " .. tostring(info.ammo) .. " | " .. tostring(info.reserve))
-            imgui.text("RF: limit=" .. tostring(_G._rf_limit) .. " count=" .. tostring(_G._rf_count) .. " blocked=" .. tostring(_G._rf_blocked) .. " gap=" .. tostring((_G._rf_global_tick or 0) - (_G._rf_last_fire_tick or 0)))
-
-        else
-            imgui.text("Waiting for game...")
+        if CORE and CORE.config then
+            local changed, new_val = imgui.checkbox("Enabled", CORE.config.enabled)
+            if changed then
+                CORE.config.enabled = new_val
+                if not new_val and DSX and DSX.payload_reset and DSX.out_path then
+                    local f = io.open(DSX.out_path, "wb")
+                    if f then f:write(DSX.payload_reset()); f:close() end
+                    print("[DualSenseX] Disabled — triggers reset")
+                end
+            end
         end
 
         imgui.tree_pop()
